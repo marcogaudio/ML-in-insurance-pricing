@@ -75,13 +75,13 @@ for (i in 1:k){
     filter(fold == i)
   
   # fit the Poisson glm model
-  sev_train_glm <- glm(ClaimAmount ~ VehPowerGLM + VehAgeGLM + DrivAgeGLM + BonusMalusGLM
-                   + VehBrand + VehGas + DensityGLM + Region + AreaGLM, weights = ClaimNb,
+  sev_train_glm <- glm(ClaimAmount ~ VehPowerGLM + DrivAgeGLM + BonusMalusGLM
+                   + VehBrand  + DensityGLM + Region, weights = ClaimNb,
                    data=train_dataset, family = Gamma(link = 'log'))
   
   # get the predictions using the test dataset
   train_dataset$fit <- fitted(sev_train_glm)
-  test_dataset$fit <- predict(sev_train_glm, newdata=test_dataset, type="response")
+  test_dataset$fit <- predict(sev_train_glm, newdata=test_dataset, type="response") * test_dataset$Exposure
   
   # get the Poisson deviance for both the test and train dataset (out and in sample)
   
@@ -104,7 +104,7 @@ predicted_loss_glm <- mean(predicted_loss_per_fold_glm)
 glm_sev_model <- glm(
   ClaimAmount ~ VehPowerGLM + VehAgeGLM + DrivAgeGLM + BonusMalusGLM
   + VehBrand + VehGas + DensityGLM + Region + AreaGLM, weights = ClaimNb, 
-  data=train_dataset, family = Gamma(link = 'log')
+  data=processed_dataset, family = Gamma(link = 'log')
 )
 
 
@@ -215,11 +215,12 @@ for (j in 1:length(sev_cp_values_grid)) {
     
     # fit the regression tree
     sev_train_tree <- distRforest::rpart(ClaimAmount ~ Area + VehPower + VehAge + DrivAge
-                               + BonusMalus + VehBrand + VehGas + Density + Region + Area,
+                                         + BonusMalus + VehBrand + VehGas + Density + Region,
                                data = train_dataset , method = "gamma", weights = ClaimNb, 
-                               control = rpart.control( xval = 0,
-                                                        minbucket = 0.01 * nrow(train_dataset),
-                                                        cp = sev_current_cp_value))
+                               control = rpart.control(xval = 0,
+                                                      maxcompete = 0, maxsurrogate = 0, 
+                                                      minbucket = 0.01 * nrow(train_dataset),
+                                                      cp = sev_current_cp_value))
     
     # get predictions
     test_dataset$fit <- predict(sev_train_tree, newdata=test_dataset, type="vector") * test_dataset$Exposure
@@ -265,7 +266,7 @@ for (i in 1:k){
   
   # fit the Poisson glm model
   sev_train_tree <- distRforest::rpart(ClaimAmount ~ Area + VehPower + VehAge + DrivAge
-                             + BonusMalus + VehBrand + VehGas + Density + Region + Area,
+                                       + BonusMalus + VehBrand + VehGas + Density + Region,
                              data = train_dataset , method = "gamma",
                              control = rpart.control( xval = 0,
                                                       
@@ -293,6 +294,124 @@ sev_out_sample_loss_rt <- mean(sev_out_sample_loss_per_fold_rt)
 
 observed_loss_rt <- mean(observed_loss_per_fold_rt)
 predicted_loss_rt <- mean(predicted_loss_per_fold_rt)
+
+
+
+# random forest
+library(distRforest)
+
+ntree_grid <- seq(from = 50, to = 500, 25)
+m <- 3
+# vector for storing the error for each number of tree parameter in ntree_grid.
+error_estimates_rf <- rep(0, times = length(ntree_grid))
+
+# vector for storing loss for each fold.
+error_estimate_per_fold_rf <- rep(0, k)
+
+for (j in 1:length(ntree_grid)) {
+  
+  ntree_value = ntree_grid[j]
+  
+  for(i in 1:k) {
+    
+    train_dataset = sev_dataset %>% 
+      filter(fold != i)
+    test_dataset = sev_dataset %>% 
+      filter(fold == i)
+    
+    # fit the regression tree
+    train_rf <- distRforest::rforest(
+      formula = ClaimAmount ~ Area + VehPower + VehAge + DrivAge
+      + BonusMalus + VehBrand + VehGas + Density + Region,
+      data = train_dataset,
+      method = 'gamma',
+      ntrees = ntree_value, 
+      ncand = m, 
+      subsample = 0.75,
+      parms = list(shrink = 0.25), 
+      control = rpart.control(cp = 0,
+                              minbucket = 0.01 * 0.75 * nrow(train_dataset),
+                              xval = 0,
+                              maxcompete = 0,
+                              maxsurrogate = 0),
+      red_mem = TRUE 
+    )
+    # get predictions
+    test_dataset$fit <- predict.rforest(train_rf, newdata=test_dataset) * test_dataset$Exposure
+    
+    # get loss
+    error_estimate_per_fold_rf[i] <- Gamma.Deviance(pred = test_dataset$fit,obs = test_dataset$ClaimNb, alpha = as.vector(test_dataset$ClaimNb))
+  }
+  error_estimates_rf[j] <- mean(error_estimate_per_fold_rf)
+  
+}
+
+
+table3 <- tibble(
+  ntree_value = ntree_grid,
+  error_estimate = error_estimates_rf
+)
+ggplot(table3, aes(x = ntree_value, y = error_estimate)) +
+  geom_point() +
+  labs(x = "number of tree", y = "Poisson Deviance")
+
+best_estimate_ntree <- table3 %>% slice_min(error_estimate) %>% 
+  select(ntree_value) %>% 
+  as.double()
+
+# using the best estimate of the number of tree parameter, fit the model with cross-validation
+# to obtain in and out of sample loss and compare with other models.
+
+sev_in_sample_loss_per_fold_rf <- rep(0, k)
+sev_out_sample_loss_per_fold_rf <- rep(0, k)
+
+predicted_loss_per_fold_rf <- rep(0, k)
+
+for (i in 1:k){
+  
+  # use fold different than i to fit the model
+  # use fold i to test the model
+  train_dataset <- sev_dataset %>% 
+    filter(fold != i)
+  test_dataset <- sev_dataset %>% 
+    filter(fold == i)
+  
+  train_rf_best <- distRforest::rforest(
+    formula = ClaimAmount ~ Area + VehPower + VehAge + DrivAge
+    + BonusMalus + VehBrand + VehGas + Density + Region,
+    data = train_dataset,
+    method = 'gamma',
+    ntrees = best_estimate_ntree, 
+    ncand = 3, 
+    subsample = 0.75, 
+    parms = list(shrink = 0.25), 
+    control = rpart.control(cp = 0,
+                            minbucket = 0.01 * 0.75 * nrow(train_dataset),
+                            xval = 0,
+                            maxcompete = 0,
+                            maxsurrogate = 0),
+    red_mem = TRUE 
+  )
+  
+  # get the predictions using the test dataset
+  train_dataset$fit <- predict.rforest(train_rf_best, newdata = train_dataset) * train_dataset$Exposure
+  test_dataset$fit <- predict.rforest(train_rf_best, newdata=test_dataset) * test_dataset$Exposure  
+  # get the Poisson deviance for both the test and train dataset (out and in sample)
+  
+  sev_in_sample_loss_per_fold_rf[i] <- Gamma.Deviance(pred = train_dataset$fit, obs = train_dataset$ClaimNb, alpha = as.vector(train_dataset$ClaimNb))
+  sev_out_sample_loss_per_fold_rf[i] <- Gamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimNb, alpha = as.vector(train_dataset$ClaimNb))
+  
+  predicted_loss_per_fold_rf[i] <- mean(test_dataset$fit)
+}
+
+sev_in_sample_loss_rf <- mean(sev_in_sample_loss_per_fold_rf)
+sev_out_sample_loss_rf <- mean(sev_out_sample_loss_per_fold_rf)
+
+predicted_loss_rf <- mean(predicted_loss_per_fold_rf)
+
+
+
+
 
 
 
