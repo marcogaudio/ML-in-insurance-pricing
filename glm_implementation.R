@@ -68,13 +68,13 @@ for (i in 1:k){
     filter(fold == i)
   
   # fit the Poisson glm model
-  train_fit <- glm(ClaimNb ~ VehPowerGLM + VehAgeGLM + DrivAgeGLM + BonusMalusGLM
+  train_glm <- glm(ClaimNb ~ VehPowerGLM + VehAgeGLM + DrivAgeGLM + BonusMalusGLM
                    + VehBrand + VehGas + DensityGLM + Region + AreaGLM, 
                    data=train_dataset, offset=log(Exposure), family=poisson())
   
   # get the predictions using the test dataset
-  train_dataset$fit <- fitted(train_fit)
-  test_dataset$fit <- predict(train_fit, newdata=test_dataset, type="response")
+  train_dataset$fit <- fitted(train_glm)
+  test_dataset$fit <- predict(train_glm, newdata=test_dataset, type="response")
   
   # get the Poisson deviance for both the test and train dataset (out and in sample)
   
