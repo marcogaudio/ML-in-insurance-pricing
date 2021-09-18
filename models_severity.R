@@ -300,7 +300,7 @@ predicted_loss_rt <- mean(predicted_loss_per_fold_rt)
 # random forest
 library(distRforest)
 
-ntree_grid <- seq(from = 50, to = 500, 25)
+ntree_grid <- seq(from = 600, to = 750, 25)
 m <- 3
 # vector for storing the error for each number of tree parameter in ntree_grid.
 error_estimates_rf <- rep(0, times = length(ntree_grid))
@@ -334,13 +334,15 @@ for (j in 1:length(ntree_grid)) {
                               xval = 0,
                               maxcompete = 0,
                               maxsurrogate = 0),
-      red_mem = TRUE 
+      red_mem = TRUE,
+      keep_data = TRUE
     )
     # get predictions
+    train_dataset$fit <- predict.rforest(train_rf) * train_dataset$Exposure
     test_dataset$fit <- predict.rforest(train_rf, newdata=test_dataset) * test_dataset$Exposure
     
     # get loss
-    error_estimate_per_fold_rf[i] <- Gamma.Deviance(pred = test_dataset$fit,obs = test_dataset$ClaimNb, alpha = as.vector(test_dataset$ClaimNb))
+    error_estimate_per_fold_rf[i] <- Gamma.Deviance(pred = test_dataset$fit,obs = test_dataset$ClaimAmount, alpha = as.vector(test_dataset$ClaimNb))
   }
   error_estimates_rf[j] <- mean(error_estimate_per_fold_rf)
   
@@ -382,6 +384,7 @@ for (i in 1:k){
     data = train_dataset,
     method = 'gamma',
     ntrees = best_estimate_ntree, 
+    weights = ClaimNb,
     ncand = 3, 
     subsample = 0.75, 
     parms = list(shrink = 0.25), 
@@ -390,16 +393,17 @@ for (i in 1:k){
                             xval = 0,
                             maxcompete = 0,
                             maxsurrogate = 0),
-    red_mem = TRUE 
+    red_mem = TRUE, 
+    keep_data = TRUE
   )
   
   # get the predictions using the test dataset
-  train_dataset$fit <- predict.rforest(train_rf_best, newdata = train_dataset) * train_dataset$Exposure
+  train_dataset$fit <- predict.rforest(train_rf_best) * train_dataset$Exposure
   test_dataset$fit <- predict.rforest(train_rf_best, newdata=test_dataset) * test_dataset$Exposure  
   # get the Poisson deviance for both the test and train dataset (out and in sample)
   
-  sev_in_sample_loss_per_fold_rf[i] <- Gamma.Deviance(pred = train_dataset$fit, obs = train_dataset$ClaimNb, alpha = as.vector(train_dataset$ClaimNb))
-  sev_out_sample_loss_per_fold_rf[i] <- Gamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimNb, alpha = as.vector(train_dataset$ClaimNb))
+  sev_in_sample_loss_per_fold_rf[i] <- Gamma.Deviance(pred = train_dataset$fit, obs = train_dataset$ClaimAmount, alpha = as.vector(train_dataset$ClaimNb))
+  sev_out_sample_loss_per_fold_rf[i] <- Gamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimAmount, alpha = as.vector(test_dataset$ClaimNb))
   
   predicted_loss_per_fold_rf[i] <- mean(test_dataset$fit)
 }
@@ -410,7 +414,162 @@ sev_out_sample_loss_rf <- mean(sev_out_sample_loss_per_fold_rf)
 predicted_loss_rf <- mean(predicted_loss_per_fold_rf)
 
 
+### gbm for claim severity 
 
+sev_ntree_grid_gbm <- seq(from = 100, to = 2000,  100)
+depth <- 3
+
+sev_error_estimates_gbm <- rep(0, times = length(sev_ntree_grid_gbm))
+
+
+sev_error_estimate_per_fold_gbm <- rep(0, k)
+
+for (j in 1:length(sev_ntree_grid_gbm)) {
+  
+  ntree_value = sev_ntree_grid_gbm[j]
+  
+  for(i in 1:k) {
+    
+    train_dataset = sev_dataset %>% 
+      filter(fold != i)
+    test_dataset = sev_dataset %>% 
+      filter(fold == i)
+    
+    # fit the gbm
+    train_gbm <- gbm::gbm(
+      formula = ClaimAmount ~ offset(log(Exposure)) + Area + VehPower + VehAge + DrivAge
+      + BonusMalus + VehBrand + as.factor(VehGas) + Density + Region,
+      data = train_dataset,
+      distribution = 'gamma',
+      weights = ClaimNb,
+      n.trees = ntree_value, 
+      interaction.depth =depth, 
+      shrinkage = 0.05,
+      bag.fraction = 0.75, 
+      n.minobsinnode = 0.01 * 0.75 * nrow(train_dataset), 
+      verbose = FALSE
+    )
+    
+    # get predictions
+    test_dataset$fit <- gbm::predict.gbm(train_gbm, newdata = test_dataset, type = "response") * test_dataset$Exposure
+    
+    # get loss
+    sev_error_estimate_per_fold_gbm[i] <- Gamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimNb, aplha = as.vector(test_dataset$ClaimNb))
+  }
+  sev_error_estimates_gbm[j] <- mean(sev_error_estimate_per_fold_gbm)
+  
+}
+
+# get the best estimate for ntree
+
+sev_table5 <- tibble(
+  ntree_value = sev_ntree_grid_gbm,
+  error_estimate = sev_error_estimates_gbm
+)
+ggplot(sev_table5, aes(x = ntree_value, y = error_estimate)) +
+  geom_point() +
+  labs(x = "number of tree", y = "Gamma Deviance")
+
+sev_best_estimate_ntree <- sev_table5 %>% slice_min(error_estimate) %>% 
+  select(ntree_value) %>% 
+  as.double()
+
+
+# tune depth 
+
+
+depth_grid <- seq(3, 9, 1)
+# vector for storing the error for each complexity
+# parameter in cp_values_grid.
+sev_error_estimates_gbm2 <- rep(0, times = length(depth_grid))
+
+# vector for storing loss for each fold.
+sev_error_estimate_per_fold_gbm2 <- rep(0, k)
+a <- Sys.time()
+for (j in 1:length(depth_grid)) {
+  
+  depth_value = depth_grid[j]
+  
+  for(i in 1:k) {
+    
+    train_dataset = sev_dataset %>% 
+      filter(fold != i)
+    test_dataset = sev_dataset %>% 
+      filter(fold == i)
+    
+    # a <- Sys.time()
+    # fit the regression tree
+    train_gbm2 <- gbm::gbm(
+      formula = ClaimAmount ~ offset(log(Exposure)) + Area + VehPower + VehAge + DrivAge
+      + BonusMalus + VehBrand + as.factor(VehGas) + Density + Region,
+      data = train_dataset,
+      distribution = 'gamma',
+      weights = ClaimNb,
+      n.trees = sev_best_estimate_ntree, # T in Table 3
+      interaction.depth =depth_value, # d in Table 3
+      shrinkage = 0.05, # lambda in Table 1
+      bag.fraction = 0.75, # delta in Table 1
+      n.minobsinnode = 0.01 * 0.75 * nrow(train_dataset), # kappa * delta in Table 1
+      verbose = FALSE
+    )
+    
+    
+    # get predictions
+    # train_dataset$fit <- predict.rforest(train_rf2, newdata = train_dataset) * train_dataset$Exposure
+    test_dataset$fit <- gbm::predict.gbm(train_gbm2, newdata = test_dataset, type = "response") * test_dataset$Exposure
+    
+    # get loss
+    sev_error_estimate_per_fold_gbm2[i] <- Poisson.DevianceGamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimNb, aplha = as.vector(test_dataset$ClaimNb))
+  }
+  sev_error_estimates_gbm2[j] <- mean(sev_error_estimate_per_fold_gbm2)
+  
+}
+
+
+# k-fold with best parameters
+
+
+
+# GBM optimal parameters already computed 
+
+sev_n_tree_gbm <- 1900
+sev_depth <- 3
+
+sev_in_sample_loss_per_fold_gbm <- rep(0, k)
+sev_out_sample_loss_per_fold_gbm <- rep(0, k)
+
+for(i in 1:k) {
+  
+  train_dataset = sev_dataset %>% 
+    filter(fold != i)
+  test_dataset = sev_dataset %>% 
+    filter(fold == i)
+  
+  # fit the gbm
+  sev_train_gbm <- gbm::gbm(
+    formula = ClaimAmount ~ offset(log(Exposure)) + Area + VehPower + VehAge + DrivAge
+    + BonusMalus + VehBrand + as.factor(VehGas) + Density + Region,
+    data = train_dataset,
+    distribution = 'gamma',
+    n.trees = sev_n_tree_gbm, 
+    interaction.depth = sev_depth, 
+    shrinkage = 0.05, 
+    bag.fraction = 0.75, 
+    n.minobsinnode = 0.01 * 0.75 * nrow(train_dataset),
+    verbose = FALSE
+  )
+  
+  train_dataset$fit <- exp(gbm::predict.gbm(sev_train_gbm2, newdata = train_dataset) ) * train_dataset$Exposure
+  test_dataset$fit <- gbm::predict.gbm(sev_train_gbm2, newdata = test_dataset, type = "response") * test_dataset$Exposure
+  
+  # get loss
+  sev_in_sample_loss_per_fold_gbm[i] <- Gamma.Deviance(pred = train_dataset$fit, obs = train_dataset$ClaimAmount, alpha = as.vector(train_dataset$ClaimNb))
+  sev_out_sample_loss_per_fold_gbm[i] <- Gamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimAmount, alpha = as.vector(test_dataset$ClaimNb))
+}
+
+
+sev_in_sample_loss_gbm <- mean(sev_in_sample_loss_per_fold_gbm) 
+sev_out_sample_loss_gbm <- mean(sev_out_sample_loss_per_fold_gbm)
 
 
 

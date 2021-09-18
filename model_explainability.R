@@ -89,6 +89,68 @@ fl_gam <- flashlight (
 )
 
 
+# Regression Tree
+
+RT_model <- rpart::rpart(cbind(Exposure , ClaimNb) ~ Area + VehPower + VehAge + DrivAge
+                         + BonusMalus + VehBrand + VehGas + Density + Region ,
+                         data = dataset , method = "poisson",
+                         control = rpart.control( xval = 1,
+                                                  minbucket =0.01 * nrow(dataset),
+                                                  cp =0.000035))
+
+
+fl_rt <- flashlight (
+  model = RT_model , label = "RT" ,
+  predict_function = function(fit , X) predict(fit, X, "vector")
+)
+
+# random forrest
+
+RF_model <- distRforest::rforest(
+  formula = cbind(Exposure , ClaimNb) ~ Area + VehPower + VehAge + DrivAge
+  + BonusMalus + VehBrand + VehGas + Density + Region,
+  data = dataset,
+  method = 'poisson',
+  ntrees = 143, 
+  ncand = 7, 
+  subsample = 0.75,
+  parms = list(shrink = 0.25), 
+  control = rpart.control(cp = 0,
+                          minbucket = 0.01 * 0.75 * nrow(dataset),
+                          xval = 0,
+                          maxcompete = 0,
+                          maxsurrogate = 0),
+  red_mem = TRUE 
+)
+
+fl_rf <- flashlight(
+  model = RF_model, label = "RF", 
+  predict_function = function(fit, X) predict.rforest(fit, X)
+)
+
+
+# GBM
+
+GBM_model <- gbm::gbm(
+  formula = ClaimNb ~ offset(log(Exposure)) + Area + VehPower + VehAge + DrivAge
+  + BonusMalus + VehBrand + as.factor(VehGas) + Density + Region,
+  data = dataset,
+  distribution = 'poisson',
+  n.trees = 1900, 
+  interaction.depth = 3, 
+  shrinkage = 0.05, 
+  bag.fraction = 0.75, 
+  n.minobsinnode = 0.01 * 0.75 * nrow(dataset),
+  verbose = FALSE
+)
+
+
+fl_gbm <- flashlight(
+  model = GBM_model, label = "GBM", 
+  predict_function = function(fit, X) gbm::predict.gbm(fit, X, "response")
+)
+
+
 metrics <- list("Average deviance" = deviance_poisson ,
                  "Relative deviance reduction" = r_squared_poisson )
 
@@ -96,15 +158,29 @@ fls_glm <- multiflashlight (list(fl_glm), data = processed_dataset ,
                             y = "ClaimNb", w = "Exposure", metrics = metrics)
 fls_gam <- multiflashlight (list(fl_gam), data = processed_dataset2 ,
                             y = "ClaimNb", w = "Exposure", metrics = metrics)
-
+fls_rt <- multiflashlight(list(fl_rt), data = dataset,
+                          y = "ClaimNb", w = "Exposure", metrics = metrics)
+fls_rf <- multiflashlight(list(fl_rf), data = dataset,
+                          y = "ClaimNb", w = "Exposure", metrics = metrics)
+fls_gbm <- multiflashlight(list(fl_gbm), data = dataset,
+                           y = "ClaimNb", w = "Exposure", metrics = metrics)
 
 x <- c("VehPower", "VehAge", "DrivAge", "BonusMalus",
        "VehBrand", "VehGas", "Density", "Region", "Area")
 imp_glm <- light_importance(fls_glm, v = x)
-plot(imp_glm, fill = "#E69F00", color = "black")
+plot(imp_glm, fill = "#0072B2", color = "black")
 
 imp_gam <- light_importance(fls_gam, v = x)
-plot(imp_gam, fill = "#E69F00", color = "black")
+plot(imp_gam, fill = "#0072B2", color = "black")
+
+imp_rt <- light_importance(fls_rt, v = x)
+plot(imp_rt, fill = "#0072B2", color = "black")
+
+imp_rf <- light_importance(fls_rf, v = x)
+plot(imp_rf, fill = "#0072B2", color = "black")
+
+imp_gbm <- light_importance(fls_gbm, v = x)
+plot(imp_gbm, fill = "#0072B2", color = "black")
 
 
 

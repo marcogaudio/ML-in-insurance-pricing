@@ -39,21 +39,7 @@ out_sample_loss_per_fold_rt[i] <- Poisson.Deviance(test_dataset$fit, test_datase
 
 
 
-# prova come wutrich 
 
-
-# poisson bm
-
-train_dataset <- dataset %>% 
-  filter(fold != 1)
-test_dataset <- dataset %>% 
-  filter(fold == 1)
-
-
-PBM.1 <- rpart::rpart(cbind(train_dataset$Exposure,ClaimNb) ~ Area + VehPower + VehAge + DrivAge 
-               + BonusMalus + VehBrand + VehGas + Density + Region, 
-               data=train_dataset, method="poisson",
-               control=rpart.control(maxdepth=5, maxsurrogate=0, xval=1, minbucket=10000, cp=0.00001)) 
 
 
 
