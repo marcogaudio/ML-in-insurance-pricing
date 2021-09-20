@@ -49,8 +49,8 @@ processed_dataset[,"Region"] <-relevel(processed_dataset[,"Region"], ref="Centre
 
 
 
-glm_model <- glm(ClaimNb ~ VehPower + VehAge + DrivAge + BonusMalus
-                 + VehBrand + VehGas + Density + Region + Area, 
+glm_model <- glm(ClaimNb ~ VehPower  + DrivAge + BonusMalus
+                 + VehBrand  + Density + Region , 
                  data = processed_dataset, offset=log(Exposure), family=poisson())
 
 
