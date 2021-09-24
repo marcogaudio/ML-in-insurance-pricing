@@ -449,15 +449,6 @@ for (j in 1:length(depth_grid)) {
 }
 
 
-
-
-
-
-
-
-
-
-
 # GBM optimal parameters already computed 
 
 n_tree_gbm <- 1900
