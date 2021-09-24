@@ -28,19 +28,6 @@ Poisson.Deviance <- function(pred, obs){
   
 }
 
-
-# alpha = as.vector(train_dataset$ClaimNb)
-# pred = train_dataset$fit
-# obs = train_dataset$ClaimAmount
-# Gamma.Deviance <- function(pred, obs, aplha){
-#   
-#   200 * (alpha * (sum((obs-pred)/pred)) - sum(log(obs/pred)))
-#   
-# }
-# 
-# Gamma.Deviance(pred, obs, alpha)
-
-
 Gamma.Deviance <- function(obs, pred, alpha){
   
   x <- rep(0, length(obs)) 
