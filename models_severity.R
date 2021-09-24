@@ -7,8 +7,6 @@ source("utilities.R")
 
 set.seed(123)
 
-
-
 sev_dataset <- tibble(dplyr::left_join(freMTPL2freq, freMTPL2sev, by = c("IDpol"))) %>% 
   dplyr::filter(!is.na(ClaimAmount)) %>%  as.data.frame()
 
@@ -60,7 +58,6 @@ processed_dataset[,"Region"] <-relevel(processed_dataset[,"Region"], ref="Centre
  # create a vector in which store the poisson deviance per fold.
 k <- 5 
 
-sev_in_sample_loss_per_fold_glm <- rep(0, k)
 sev_out_sample_loss_per_fold_glm <- rep(0, k)
 
 observed_loss_per_fold <- rep(0, k)
@@ -74,7 +71,7 @@ for (i in 1:k){
   test_dataset <- processed_dataset %>% 
     filter(fold == i)
   
-  # fit the Poisson glm model
+  # fit the  glm model
   sev_train_glm <- glm(ClaimAmount ~ VehPowerGLM + DrivAgeGLM + BonusMalusGLM
                        + VehBrand + DensityGLM + Region, weights = ClaimNb,
                    data=train_dataset, family = Gamma(link = 'log'))
@@ -85,14 +82,12 @@ for (i in 1:k){
   
   # get the Poisson deviance for both the test and train dataset (out and in sample)
   
-  # sev_in_sample_loss_per_fold_glm[i] <- Gamma.Deviance(pred = train_dataset$fit, obs = train_dataset$ClaimAmount, alpha = as.vector(train_dataset$ClaimNb))
   sev_out_sample_loss_per_fold_glm[i] <- Gamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimAmount, alpha = as.vector(test_dataset$ClaimNb))
   
   observed_loss_per_fold[i] <- mean(train_dataset$ClaimAmount)
   predicted_loss_per_fold_glm[i] <- mean(test_dataset$fit)
 }
 
-# sev_in_sample_loss_glm <- mean(sev_in_sample_loss_per_fold_glm)
 sev_out_sample_loss_glm <- mean(sev_out_sample_loss_per_fold_glm)
 
 observed_loss <- mean(observed_loss_per_fold)
@@ -116,37 +111,25 @@ library(mgcv)
 library(mgcViz)
 
 # data needs to be preprocessed before fitting a gamma gam with log link
-# (following paper about french case)
 processed_dataset2_sev <- sev_dataset
 processed_dataset2_sev$VehGas <- factor(processed_dataset2_sev$VehGas)
 # processed_dataset2_sev$VehPowerGLM <- as.factor(pmin(processed_dataset2_sev$VehPower,9))
-processed_dataset2_sev$AreaGAM <- as.integer(processed_dataset2_sev$Area)
-processed_dataset2_sev$BonusMalusGAM <- as.integer(pmin(processed_dataset2_sev$BonusMalus, 150))
-processed_dataset2_sev$DensityGAM <- as.numeric(log(processed_dataset2_sev$Density))
+processed_dataset2_sev$Area <- as.integer(processed_dataset2_sev$Area)
+processed_dataset2_sev$BonusMalus <- as.integer(pmin(processed_dataset2_sev$BonusMalus, 150))
+processed_dataset2_sev$Density <- as.numeric(log(processed_dataset2_sev$Density))
 processed_dataset2_sev[,"Region"] <-relevel(processed_dataset2_sev[,"Region"], ref="Centre")
 
-a <- Sys.time()
 gam_model_sev <- mgcv::gam(ClaimAmount ~ s(VehPower)  + s(DrivAge) + s(BonusMalus)
                       + VehBrand  + s(Density) + Region, 
                       data = processed_dataset2_sev, weights = as.vector(ClaimNb), family=Gamma(link = 'log'))
-b <- Sys.time()
-b-a
 
 viz_sev <- getViz(gam_model_sev)
 
-functions_plot <- plot(viz_sev, allTerms = TRUE) +
-  l_points() +
-  l_fitLine(linetype = 1)  +
-  l_ciLine(linetype = 3) +
-  l_ciBar() +
-  l_rug() +
-  theme_grey() 
-
-print(functions_plot, pages = 1)
+functions_plot <- plot(viz_sev, allTerms = TRUE)
 
 
 
-sev_in_sample_loss_per_fold_gam <- rep(0, k)
+
 sev_out_sample_loss_per_fold_gam <- rep(0, k)
 
 
@@ -172,14 +155,12 @@ for (i in 1:k){
   
   # get the Poisson deviance for both the test and train dataset (out and in sample)
   
-  # sev_in_sample_loss_per_fold_gam[i] <- Gamma.Deviance(pred = train_dataset$fit, obs = train_dataset$ClaimAmount, alpha = as.vector(train_dataset$ClaimNb))
   sev_out_sample_loss_per_fold_gam[i] <- Gamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimAmount, alpha = as.vector(test_dataset$ClaimNb))
   
   
   predicted_loss_per_fold_gam[i] <- mean(test_dataset$fit)
 }
 
-# sev_in_sample_loss_gam <- mean(sev_in_sample_loss_per_fold_gam)
 sev_out_sample_loss_gam <- mean(sev_out_sample_loss_per_fold_gam)
 
 predicted_loss_gam <- mean(predicted_loss_per_fold_gam)
@@ -232,7 +213,7 @@ for (j in 1:length(sev_cp_values_grid)) {
   
 }
 
-
+# collect the cp values and the related errors, plot them and get the best estimate
 table2_sev <- tibble(
   cp_value = sev_cp_values_grid,
   error_estimate = sev_error_estimates_rt
@@ -250,7 +231,6 @@ best_estimate_cp_sev <- as.double(best_estimate_cp_sev[1])
 # using the best estimate of the complexity parameter, fit the model with cross-validation
 # to obtain in and out of sample loss and compare with other models.
 
-sev_in_sample_loss_per_fold_rt <- rep(0, k)
 sev_out_sample_loss_per_fold_rt <- rep(0, k)
 
 predicted_loss_per_fold_rt <- rep(0, k)
@@ -263,7 +243,7 @@ for (i in 1:k){
   test_dataset <- sev_dataset %>% 
     filter(fold == i)
   
-  # fit the Poisson glm model
+  # fit the regression tree
   sev_train_tree <- distRforest::rpart(ClaimAmount ~ VehPower  + DrivAge 
                                        + BonusMalus + VehBrand + Density + Region,
                              data = train_dataset , method = "gamma",
@@ -281,7 +261,6 @@ for (i in 1:k){
   
   # get the Poisson deviance for both the test and train dataset (out and in sample)
   
-  # sev_in_sample_loss_per_fold_rt[i] <- Gamma.Deviance(pred = train_dataset$fit, obs = train_dataset$ClaimAmount, alpha = as.vector(train_dataset$ClaimNb))
   sev_out_sample_loss_per_fold_rt[i] <- Gamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimAmount, alpha = as.vector(test_dataset$ClaimNb))
   
   
@@ -289,7 +268,6 @@ for (i in 1:k){
   predicted_loss_per_fold_rt[i] <- mean(test_dataset$fit)
 }
 
-# sev_in_sample_loss_rt <- mean(sev_in_sample_loss_per_fold_rt)
 sev_out_sample_loss_rt <- mean(sev_out_sample_loss_per_fold_rt)
 
 predicted_loss_rt <- mean(predicted_loss_per_fold_rt)
@@ -318,7 +296,7 @@ for (j in 1:length(ntree_grid)) {
     test_dataset = sev_dataset %>% 
       filter(fold == i)
     
-    # fit the regression tree
+    # fit the random forest
     train_rf <- distRforest::rforest(
       formula = ClaimAmount ~ VehPower + DrivAge
       + BonusMalus + VehBrand + Density + Region,
@@ -337,7 +315,6 @@ for (j in 1:length(ntree_grid)) {
       keep_data = TRUE
     )
     # get predictions
-    # train_dataset$fit <- predict.rforest(train_rf) * as.vector(train_dataset$ClaimNb)
     test_dataset$fit <- predict.rforest(train_rf, newdata=test_dataset) * as.vector(test_dataset$ClaimNb) 
     
     # get loss
@@ -347,7 +324,7 @@ for (j in 1:length(ntree_grid)) {
   
 }
 
-
+# get the best estimate of ntree param.
 table3 <- tibble(
   ntree_value = ntree_grid,
   error_estimate = error_estimates_rf
@@ -363,7 +340,6 @@ best_estimate_ntree <- table3 %>% slice_min(error_estimate) %>%
 # using the best estimate of the number of tree parameter, fit the model with cross-validation
 # to obtain in and out of sample loss and compare with other models.
 
-sev_in_sample_loss_per_fold_rf <- rep(0, k)
 sev_out_sample_loss_per_fold_rf <- rep(0, k)
 
 predicted_loss_per_fold_rf <- rep(0, k)
@@ -397,17 +373,14 @@ for (i in 1:k){
   )
   
   # get the predictions using the test dataset
-  # train_dataset$fit <- predict.rforest(train_rf_best) * as.vector(train_dataset$ClaimNb)
   test_dataset$fit <- predict.rforest(train_rf_best, newdata=test_dataset) * as.vector(test_dataset$ClaimNb)
   # get the Poisson deviance for both the test and train dataset (out and in sample)
   
-  # sev_in_sample_loss_per_fold_rf[i] <- Gamma.Deviance(pred = train_dataset$fit, obs = train_dataset$ClaimAmount, alpha = as.vector(train_dataset$ClaimNb))
   sev_out_sample_loss_per_fold_rf[i] <- Gamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimAmount, alpha = as.vector(test_dataset$ClaimNb))
   
   predicted_loss_per_fold_rf[i] <- mean(test_dataset$fit)
 }
 
-# sev_in_sample_loss_rf <- mean(sev_in_sample_loss_per_fold_rf)
 sev_out_sample_loss_rf <- mean(sev_out_sample_loss_per_fold_rf)
 
 predicted_loss_rf <- mean(predicted_loss_per_fold_rf)
@@ -518,7 +491,6 @@ for (j in 1:length(depth_grid)) {
     
     
     # get predictions
-    # train_dataset$fit <- predict.rforest(train_rf2, newdata = train_dataset) * train_dataset$Exposure
     test_dataset$fit <- predict_model.gbm(train_gbm2, newdata = test_dataset) * as.vector(test_dataset$ClaimNb)
     
     # get loss
@@ -540,7 +512,6 @@ for (j in 1:length(depth_grid)) {
 sev_n_tree_gbm <- sev_best_estimate_ntree
 sev_depth <- 2
 
-sev_in_sample_loss_per_fold_gbm <- rep(0, k)
 sev_out_sample_loss_per_fold_gbm <- rep(0, k)
 
 predicted_loss_per_fold_gbm <- rep(0, k)
@@ -567,27 +538,22 @@ for(i in 1:k) {
     verbose = FALSE
   )
   
-  # train_dataset$fit <- predict_model.gbm(sev_train_gbm, newdata = train_dataset)* as.vector(train_dataset$ClaimNb)
-  # train_dataset$fit <- exp(predict(sev_train_gbm, newdata = train_dataset)) * as.vector(train_dataset$ClaimNb)
   test_dataset$fit <- predict_model.gbm(sev_train_gbm, newdata = test_dataset)  * as.vector(test_dataset$ClaimNb)
   
   # get loss
-  # sev_in_sample_loss_per_fold_gbm[i] <- Gamma.Deviance(pred = train_dataset$fit, obs = train_dataset$ClaimAmount, alpha = as.vector(train_dataset$ClaimNb))
   sev_out_sample_loss_per_fold_gbm[i] <- Gamma.Deviance(pred = test_dataset$fit, obs = test_dataset$ClaimAmount, alpha = as.vector(test_dataset$ClaimNb))
   
   predicted_loss_per_fold_gbm[i] <- mean(test_dataset$fit)
   
 }
 
-
-# sev_in_sample_loss_gbm <- mean(sev_in_sample_loss_per_fold_gbm) 
 sev_out_sample_loss_gbm <- mean(sev_out_sample_loss_per_fold_gbm)
 
 predicted_loss_gbm <- mean(predicted_loss_per_fold_gbm)
 
 
 
- 
+# table with out-of-sample losses
 severity_table <- tibble(
   glm = sev_out_sample_loss_glm,
   gam = sev_out_sample_loss_gam ,
@@ -595,3 +561,29 @@ severity_table <- tibble(
   rf = sev_out_sample_loss_rf,
   gbm = sev_out_sample_loss_gbm
 ) %>% view()
+
+
+
+
+
+
+# graph the out_sample loss for the 5 fold
+
+as <- tibble(loss = sev_out_sample_loss_per_fold_glm, method = "GLM")
+bs <- tibble(loss = sev_out_sample_loss_per_fold_gam, method = "GAM")
+cs <- tibble(loss = sev_out_sample_loss_per_fold_rt, method = "RT")
+ds <- tibble(loss = sev_out_sample_loss_per_fold_rf, method = "RF")
+es <- tibble(loss = sev_out_sample_loss_per_fold_gbm, method = "GBM")
+oslsev_to_plot <- bind_rows(as, bs, cs, ds, es) %>% 
+  group_by(method) %>% 
+  mutate(fold = as.character(1:n())) %>% 
+  ungroup()
+
+library(ggplot2)
+
+
+ggplot(data = oslsev_to_plot) +
+  geom_line(aes(y = loss, x = fold, color = method, group = method)) + 
+  theme_classic()
+
+
