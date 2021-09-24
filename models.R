@@ -3,7 +3,6 @@ source("utilities.R")
 library(tidyverse)
 #### GLM
 # choose a number of fold (optimal number usually 5 or 10)
-
 k <- 5 
 
 
@@ -34,10 +33,7 @@ processed_dataset$BonusMalusGLM <- as.integer(pmin(processed_dataset$BonusMalus,
 processed_dataset$DensityGLM <- as.numeric(log(processed_dataset$Density))
 processed_dataset[,"Region"] <-relevel(processed_dataset[,"Region"], ref="Centre")
 
-
-view(processed_dataset)
-
-
+# view(processed_dataset)
 
 # create a vector in which store the poisson deviance per fold.
 
@@ -63,14 +59,8 @@ for (i in 1:k){
   
   # get the predictions using the test dataset
   
-  # y_hat <- predict(train_fit, newdata = test_dataset, type ="response")
-  
-  
   train_dataset$fit <- fitted(train_fit)
   test_dataset$fit <- predict(train_fit, newdata=test_dataset, type="response")
-  
-  
-  # c(Poisson.Deviance(train_dataset$fit, train_dataset$ClaimNb), Poisson.Deviance(test_dataset$fit, test_dataset$ClaimNb))
   
   # get the Poisson deviance for both the test and train dataset (out and in sample)
   
@@ -89,8 +79,7 @@ library(gam)
 library(mgcv)
 library(mgcViz)
 
-# data needs to be preprocessed before fitting a poisson glm with log link
-# (following paper about french case)
+# data needs to be preprocessed before fitting a poisson gam with log link
 processed_dataset2 <- dataset
 processed_dataset2$VehGas <- factor(processed_dataset2$VehGas)
 # processed_dataset2$VehPowerGLM <- as.factor(pmin(processed_dataset2$VehPower,9))
@@ -99,25 +88,14 @@ processed_dataset2$BonusMalusGAM <- as.integer(pmin(processed_dataset2$BonusMalu
 processed_dataset2$DensityGAM <- as.numeric(log(processed_dataset2$Density))
 processed_dataset2[,"Region"] <-relevel(processed_dataset2[,"Region"], ref="Centre")
 
-a <- Sys.time()
-gam_model <- gam::gam(ClaimNb ~ gam::s(VehPower) + gam::s(VehAge) + gam::s(DrivAge) + gam::s(BonusMalus)
-                      + VehBrand + VehGas + gam::s(Density) + Region + Area, 
+gam_model <- gam::gam(ClaimNb ~ s(VehPower) + s(VehAge) + s(DrivAge) + s(BonusMalus)
+                      + VehBrand + VehGas + s(Density) + Region + Area, 
                       data = processed_dataset2, offset=log(Exposure), family=poisson())
-b <- Sys.time()
-b-a
-plot(gam_model, select = 1)
-#plot the fitted smooth functions
-# viz <- getViz(gam_model)
-# 
-# functions_plot <- plot(viz, allTerms = TRUE) +
-#   l_points() +
-#   l_fitLine(linetype = 1)  +
-#   l_ciLine(linetype = 3) +
-#   l_ciBar() +
-#   l_rug() +
-#   theme_grey() 
-# 
-# print(functions_plot, pages = 1)
+
+# plot the fitted smooth functions
+viz <- getViz(gam_model)
+
+functions_plot <- plot(viz, allTerms = TRUE)
 
 
 in_sample_loss_per_fold_gam <- rep(0, k)
@@ -132,7 +110,7 @@ for (i in 1:k){
   test_dataset <- processed_dataset2 %>% 
     filter(fold == i)
   
-  # fit the Poisson glm model
+  # fit the gam model
   train_fit <- gam::gam(ClaimNb ~ gam::s(VehPower) + gam::s(VehAge) + gam::s(DrivAge) + gam::s(BonusMalus)
                         + VehBrand + VehGas + Density + Region + Area, 
                         data = train_dataset, offset=log(Exposure), family=poisson())
@@ -198,7 +176,8 @@ for (j in 1:length(cp_values_grid)) {
   
 }
 
-
+# store the cp values and the corresponding errors in a tibble, then plot them and
+# get the best estimate 
 table2 <- tibble(
   cp_value = cp_values_grid,
   error_estimate = error_estimates_rt
@@ -226,7 +205,7 @@ for (i in 1:k){
   test_dataset <- dataset %>% 
     filter(fold == i)
   
-  # fit the Poisson glm model
+  # fit the regression tree
   train_tree <- rpart::rpart(cbind(Exposure , ClaimNb) ~ Area + VehPower + VehAge + DrivAge
                              + BonusMalus + VehBrand + VehGas + Density + Region ,
                              data = train_dataset , method = "poisson",
@@ -248,20 +227,6 @@ for (i in 1:k){
 
 in_sample_loss_rt <- mean(in_sample_loss_per_fold_rt)
 out_sample_loss_rt <- mean(out_sample_loss_per_fold_rt)
-
-
-
-# to have an overview of the model, a regression tree is fitted over the 80% of dataset(excluding fold 5).
-
-tree_model <- rpart::rpart(cbind(Exposure , ClaimNb) ~ Area + VehPower + VehAge + DrivAge
-                           + BonusMalus + VehBrand + VehGas + Density + Region ,
-                           data = train_dataset , method = "poisson",
-                           control = rpart.control( xval = 1,
-                                                    minbucket =0.01 * nrow(train_dataset),
-                                                    cp =best_estimate_cp))
-tree_model
-
-rpart.plot(tree_model)
 
 ### Random Forests
 library(distRforest)
@@ -289,7 +254,7 @@ for (j in 1:length(ntree_grid)) {
     test_dataset = dataset %>% 
       filter(fold == i)
     
-    # fit the regression tree
+    # fit the Random Forest
     train_rf <- distRforest::rforest(
       formula = cbind(Exposure , ClaimNb) ~ Area + VehPower + VehAge + DrivAge
       + BonusMalus + VehBrand + VehGas + Density + Region,
@@ -316,7 +281,7 @@ for (j in 1:length(ntree_grid)) {
   
 }
 
-
+# plot the errors associated to the ntree param.
 table3 <- tibble(
   ntree_value = ntree_grid,
   error_estimate = error_estimates_rf
@@ -328,82 +293,6 @@ ggplot(table3, aes(x = ntree_value, y = error_estimate)) +
 best_estimate_ntree <- table3 %>% slice_min(error_estimate) %>% 
   select(ntree_value) %>% 
   as.double()
-
-
-# prova più alberi 
-
-ntree_grid2 <- seq(from = 125, to = 150,  1)
-m <- 7
-m_grid <- seq(2, 8 , 1)
-# vector for storing the error for each complexity
-# parameter in cp_values_grid.
-error_estimates_rf2 <- rep(0, times = length(m_grid))
-
-# vector for storing loss for each fold.
-error_estimate_per_fold_rf2 <- rep(0, k)
-a <- Sys.time()
-for (j in 1:length(m_grid)) {
-  
-  m_value2 = m_grid[j]
-  
-  for(i in 1:k) {
-    
-    train_dataset = dataset %>% 
-      filter(fold != i)
-    test_dataset = dataset %>% 
-      filter(fold == i)
-    
-    # a <- Sys.time()
-    # fit the regression tree
-    train_rf2 <- distRforest::rforest(
-      formula = cbind(Exposure , ClaimNb) ~ Area + VehPower + VehAge + DrivAge
-      + BonusMalus + VehBrand + VehGas + Density + Region,
-      data = train_dataset,
-      method = 'poisson',
-      ntrees = 143, # T in Table 3
-      ncand = m_value2, # m in Table 3
-      subsample = 0.75, # delta in Table 1
-      parms = list(shrink = 0.25), # gamma in Table 1
-      control = rpart.control(cp = 0, # cp in Table 1
-                              minbucket = 0.01 * 0.75 * nrow(train_dataset), # kappa * delta in Table 1
-                              xval = 0,
-                              maxcompete = 0,
-                              maxsurrogate = 0),
-      red_mem = TRUE # reduces the memory footprint of individual rpart trees
-    )
-    
-    # b <- Sys.time()
-    # b-a
-    # get predictions
-    train_dataset$fit <- predict.rforest(train_rf2, newdata = train_dataset) * train_dataset$Exposure
-    test_dataset$fit <- predict.rforest(train_rf2, newdata=test_dataset) * test_dataset$Exposure
-    
-    # get loss
-    error_estimate_per_fold_rf2[i] <- Poisson.Deviance(test_dataset$fit, test_dataset$ClaimNb)
-  }
-  error_estimates_rf2[j] <- mean(error_estimate_per_fold_rf2)
-  
-}
-
-b <- Sys.time()
-b-a
-
-
-table4 <- tibble(
-  ntree_value = ntree_grid2,
-  error_estimate = error_estimates_rf2
-)
-ggplot(table4, aes(x = ntree_value, y = error_estimate)) +
-  geom_point() +
-  labs(x = "number of tree", y = "Poisson Deviance")
-
-best_estimate_ntree <- table4 %>% slice_min(error_estimate) %>% 
-  select(ntree_value) %>% 
-  as.double()
-
-# 143
-
-
 
 # using the best estimate of the number of tree parameter, fit the model with cross-validation
 # to obtain in and out of sample loss and compare with other models.
@@ -495,15 +384,13 @@ out_sample_loss_gbm <- mean(out_sample_loss_per_fold_gbm)
 
 
 # graph the out_sample loss for the 5 fold
-
-
 a <- tibble(loss = out_sample_loss_per_fold_glm, method = "GLM")
 b <- tibble(loss = out_sample_loss_per_fold_gam, method = "GAM")
 c <- tibble(loss = out_sample_loss_per_fold_rt, method = "RT")
 d <- tibble(loss = out_sample_loss_per_fold_rf, method = "RF")
-e <- tibble(loss = out_sample_loss_gbm, method = "GBM")
+e <- tibble(loss = out_sample_loss_per_fold_gbm, method = "GBM")
 osl_to_plot <- bind_rows(a,b, c, d, e) %>% 
-  group(method) %>% 
+  group_by(method) %>% 
   mutate(fold = as.character(1:n())) %>% 
   ungroup()
 
